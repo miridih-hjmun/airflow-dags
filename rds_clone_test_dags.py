@@ -20,8 +20,8 @@ try:
     rds_clone_config_str = Variable.get('rds_clone_config')
     rds_clone_config = json.loads(rds_clone_config_str)
     
-    GIT_REPO = rds_clone_config.get('git', {}).get('repo', "https://github.com/your-organization/devops-docker.git")
-    GIT_BRANCH = rds_clone_config.get('git', {}).get('branch', "main")
+    GIT_REPO = rds_clone_config.get('git', {}).get('repo', "https://github.com/miridih/devops-docker.git")
+    GIT_BRANCH = rds_clone_config.get('git', {}).get('branch', "feature/develop-001")
     
     TASKS = rds_clone_config.get('tasks', [])
     print(f"RDS 클론 작업 설정을 로드했습니다. 총 {len(TASKS)}개 작업이 정의되어 있습니다.")
