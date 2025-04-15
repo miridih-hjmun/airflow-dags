@@ -54,38 +54,36 @@ for idx, task_config in enumerate(TASKS):
         tags=['test', 'devops', 'rds', 'clone', services, env],
     ) as dag:
         
-        # 임시 디렉토리 생성
-        create_temp_dir = BashOperator(
-            task_id='create_temp_dir',
-            bash_command='mkdir -p "${AIRFLOW_HOME}/tmp/$(date +%Y%m%d_%H%M%S)_{{ ds_nodash }}_{{ task.task_id }}" && echo "${AIRFLOW_HOME}/tmp/$(date +%Y%m%d_%H%M%S)_{{ ds_nodash }}_{{ task.task_id }}"',
-            do_xcom_push=True
-        )
-        
-        # Git 저장소에서 코드 가져오기
-        fetch_code = BashOperator(
-            task_id='fetch_code',
-            bash_command='''
-            TEMP_DIR="{{ task_instance.xcom_pull('create_temp_dir') }}"
-            cd $TEMP_DIR
-            git clone --depth 1 --branch {{ params.branch }} {{ params.repo }} repo
-            echo "$TEMP_DIR/repo"
-            ''',
-            params={'repo': GIT_REPO, 'branch': GIT_BRANCH},
-            do_xcom_push=True
-        )
-        
-        # 프로젝트별 환경 변수 설정
-        env_vars = rds_clone_config.get('services', {}).get(services, {}).get(env, {})
-        
-        # RDS 클론 스크립트 실행 가능성 테스트 (실제 실행하지 않음)
-        run_script = BashOperator(
-            task_id=f'run_{services}_{env}_clone',
+        # 모든 작업을 하나의 작업으로 통합
+        run_all = BashOperator(
+            task_id=f'run_{services}_{env}_clone_all',
             bash_command=f'''
-            REPO_DIR="{{{{ task_instance.xcom_pull('fetch_code') }}}}"
-            cd $REPO_DIR/{script_path}
+            # 1. 임시 디렉토리 생성
+            TEMP_DIR="${{AIRFLOW_HOME}}/tmp/$(date +%Y%m%d_%H%M%S)_rdsclone_test"
+            echo "임시 디렉토리 생성: $TEMP_DIR"
+            mkdir -p "$TEMP_DIR"
+            
+            # 2. Git 저장소에서 코드 가져오기
+            echo "Git 저장소 클론 중: {GIT_REPO} (브랜치: {GIT_BRANCH})"
+            cd $TEMP_DIR
+            git clone --depth 1 --branch {GIT_BRANCH} {GIT_REPO} repo
+            
+            # 클론 결과 확인
+            if [ $? -ne 0 ]; then
+                echo "❌ Git 저장소 클론 실패"
+                rm -rf "$TEMP_DIR"
+                exit 1
+            fi
+            
+            echo "저장소 내용:"
+            ls -la "$TEMP_DIR/repo"
+            
+            # 3. RDS 클론 스크립트 실행 가능성 테스트
+            echo "RDS 클론 스크립트 확인 중..."
+            cd "$TEMP_DIR/repo/{script_path}"
             
             echo "============== RDS 클론 실행 가능성 테스트 =============="
-            echo "작업 경로: $REPO_DIR/{script_path}"
+            echo "작업 경로: $TEMP_DIR/repo/{script_path}"
             
             # RdsToRds.sh 파일 확인
             if [ -f "RdsToRds.sh" ]; then
@@ -125,19 +123,16 @@ for idx, task_config in enumerate(TASKS):
                 echo ""
                 echo "❌ RdsToRds.sh 실행 가능성 테스트 실패"
             fi
+            
+            # 4. 임시 파일 정리
+            echo "임시 디렉토리 정리 중: $TEMP_DIR"
+            cd /
+            rm -rf "$TEMP_DIR"
+            
+            echo "모든 작업 완료"
             ''',
             execution_timeout=timedelta(hours=1),  # 테스트는 짧게 설정
         )
-        
-        # 임시 파일 정리
-        cleanup = BashOperator(
-            task_id='cleanup',
-            bash_command='rm -rf "{{ task_instance.xcom_pull(\'create_temp_dir\') }}"',
-            trigger_rule=TriggerRule.ALL_DONE,
-        )
-        
-        # 작업 순서 정의
-        create_temp_dir >> fetch_code >> run_script >> cleanup
         
         # DAG 변수에 현재 DAG 할당
         globals()[dag_id] = dag 
