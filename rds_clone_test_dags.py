@@ -21,7 +21,7 @@ try:
     rds_clone_config = json.loads(rds_clone_config_str)
     
     GIT_REPO = rds_clone_config.get('git', {}).get('repo', "https://github.com/miridih/devops-docker.git")
-    GIT_BRANCH = rds_clone_config.get('git', {}).get('branch', "feature/develop-001")
+    GIT_BRANCH = rds_clone_config.get('git', {}).get('branch', "main")
     
     TASKS = rds_clone_config.get('tasks', [])
     print(f"RDS 클론 작업 설정을 로드했습니다. 총 {len(TASKS)}개 작업이 정의되어 있습니다.")
@@ -77,65 +77,55 @@ for idx, task_config in enumerate(TASKS):
         # 프로젝트별 환경 변수 설정
         env_vars = rds_clone_config.get('services', {}).get(services, {}).get(env, {})
         
-        # RDS 클론 스크립트 실행 (테스트 모드) - 실제 실행하지 않고 출력만 함
+        # RDS 클론 스크립트 실행 가능성 테스트 (실제 실행하지 않음)
         run_script = BashOperator(
             task_id=f'run_{services}_{env}_clone',
             bash_command=f'''
             REPO_DIR="{{{{ task_instance.xcom_pull('fetch_code') }}}}"
             cd $REPO_DIR/{script_path}
             
-            # 실행될 명령어 출력만 하고 실제 실행은 하지 않음
-            echo "============== 테스트 모드: 다음 명령이 실행됩니다 =============="
-            echo "cd $REPO_DIR/{script_path}"
-            echo "python main.py -s $SOURCE_DB_IDENTIFIER -t $TARGET_DB_IDENTIFIER -c $TARGET_DB_INSTANCE_CLASS -d $TARGET_DB_NAME -P ********** -u $TARGET_DB_USER_ID -p **********"
+            echo "============== RDS 클론 실행 가능성 테스트 =============="
+            echo "작업 경로: $REPO_DIR/{script_path}"
             
-            # 환경 변수 확인
-            echo ""
-            echo "============== 환경 변수 확인 =============="
-            echo "SOURCE_DB_IDENTIFIER: $SOURCE_DB_IDENTIFIER"
-            echo "TARGET_DB_IDENTIFIER: $TARGET_DB_IDENTIFIER"
-            echo "TARGET_DB_INSTANCE_CLASS: $TARGET_DB_INSTANCE_CLASS"
-            echo "TARGET_DB_NAME: $TARGET_DB_NAME"
-            echo "TARGET_DB_USER_ID: $TARGET_DB_USER_ID"
-            echo "DATE_NOW: $DATE_NOW"
-            echo "SLACK_APP_TOKEN: ********"
-            echo "SLACK_APP_CHANNEL: $SLACK_APP_CHANNEL"
-            
-            # 추가 확인: 필요한 파일이 존재하는지 체크
-            echo ""
-            echo "============== 파일 확인 =============="
-            if [ -f "main.py" ]; then
-                echo "main.py 파일 존재: OK"
-                echo "main.py 내용 (첫 10줄):"
-                head -n 10 main.py
+            # RdsToRds.sh 파일 확인
+            if [ -f "RdsToRds.sh" ]; then
+                echo "✅ RdsToRds.sh 파일 존재: OK"
+                # 내용 확인 (처음 몇 줄만)
+                echo "RdsToRds.sh 내용 (첫 10줄):"
+                head -n 10 RdsToRds.sh
+                
+                # 실행 권한 확인
+                if [ -x "RdsToRds.sh" ]; then
+                    echo "✅ RdsToRds.sh 실행 권한: OK"
+                else
+                    echo "❌ RdsToRds.sh 실행 권한 없음 (chmod +x RdsToRds.sh로 권한 부여 필요)"
+                fi
+                
+                # RdsToRds.sh 내 명령 확인
+                echo ""
+                echo "============== RdsToRds.sh 내부 파이썬 실행 명령 =============="
+                grep -E "python|/usr/bin/python|/usr/local/bin/python" RdsToRds.sh || echo "Python 실행 명령을 찾을 수 없습니다."
+                
+                # 환경 변수 확인
+                echo ""
+                echo "============== RdsToRds.sh 내 환경 변수 확인 =============="
+                grep -E "^[A-Z_]+=.*" RdsToRds.sh || echo "환경 변수를 찾을 수 없습니다."
+                
+                echo ""
+                echo "============== 실행 시뮬레이션 =============="
+                echo "다음 명령이 실행될 예정입니다 (실제로 실행되지 않음):"
+                echo "./RdsToRds.sh"
+                echo ""
+                echo "✅ RdsToRds.sh 실행 가능성 테스트 완료"
             else
-                echo "main.py 파일 없음: ERROR"
+                echo "❌ RdsToRds.sh 파일 없음: ERROR"
                 echo "디렉토리 내용:"
                 ls -la
+                echo "이 경로에 RdsToRds.sh 파일이 없습니다. 경로를 확인해주세요."
+                echo ""
+                echo "❌ RdsToRds.sh 실행 가능성 테스트 실패"
             fi
-            
-            # 추가 확인: Python 환경 체크
-            echo ""
-            echo "============== Python 환경 확인 =============="
-            which python
-            python --version
-            
-            echo ""
-            echo "============== 테스트 완료 =============="
-            echo "이 테스트 DAG는 실제로 RDS 클론을 실행하지 않습니다."
             ''',
-            env={
-                'SOURCE_DB_IDENTIFIER': env_vars.get('source_db_identifier', ''),
-                'TARGET_DB_IDENTIFIER': env_vars.get('target_db_identifier', ''),
-                'TARGET_DB_INSTANCE_CLASS': env_vars.get('instance_class', 'db.t3.large'),
-                'TARGET_DB_NAME': env_vars.get('db_name', ''),
-                'TARGET_DB_ADMIN_PASSWD': f"{{{{ var.value.{services}_{env}_admin_passwd }}}}",
-                'TARGET_DB_USER_ID': env_vars.get('user_id', ''),
-                'TARGET_DB_USER_PASSWD': f"{{{{ var.value.{services}_{env}_user_passwd }}}}",
-                'DATE_NOW': '$(date +%y%m%d)',
-                'SLACK_APP_TOKEN': "{{ var.value.slack_app_token }}",
-                'SLACK_APP_CHANNEL': rds_clone_config.get('slack', {}).get('channel', ''),
-            },
             execution_timeout=timedelta(hours=1),  # 테스트는 짧게 설정
         )
         
